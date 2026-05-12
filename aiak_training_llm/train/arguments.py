@@ -362,6 +362,13 @@ def _add_extra_training_args(parser: argparse.ArgumentParser):
     group.add_argument("--length-sort-desc", action="store_true",
                     help="按长度从长到短")
 
+    group.add_argument('--text-subspace-path', type=str, default=None,
+                       help='Path to precomputed Fisher-weighted SVD subspace dict '
+                            '(.pt produced by extract_subspace.py). When set, gradient '
+                            'updates on LLM Q/K/V/O/Gate/Up/Down linear layers are '
+                            'projected onto the orthogonal complement of the text-important '
+                            'subspace. Requires TP=PP=CP=1, --use-distributed-optimizer, --bf16.')
+
     return parser
 
 

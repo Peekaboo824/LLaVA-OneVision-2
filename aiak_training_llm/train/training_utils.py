@@ -449,6 +449,16 @@ def setup_model_and_optimizer(model_provider_func,
         torch.distributed.barrier()
         exit()
 
+    # Text-subspace gradient projection (optional, off by default).
+    # Must run after load_checkpoint and before the first optimizer.step.
+    if getattr(args, "text_subspace_path", None):
+        from .text_subspace_projection import attach_text_subspace_projection
+        attach_text_subspace_projection(
+            model=model,
+            optimizer=optimizer,
+            subspace_path=args.text_subspace_path,
+        )
+
     return model, ema, optimizer, opt_param_scheduler
 
 

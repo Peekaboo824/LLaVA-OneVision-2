@@ -139,7 +139,7 @@ TRAINING_ARGS=(
     --save-interval 2000
     --ckpt-format torch
     --dataloader-save "${SAVE_CKPT_PATH}/dataloader"
-
+    --no-rope-fusion
     --ckpt-fully-parallel-load
     --recompute-granularity full
     --recompute-method uniform
@@ -159,6 +159,14 @@ LOGGING_ARGS=(
     --tensorboard-dir "${TENSORBOARD_PATH}"
     --log-timers-to-tensorboard
 )
+
+# === Text subspace projection (optional) ===
+TEXT_SUBSPACE_PATH="${TEXT_SUBSPACE_PATH:-}"
+TEXT_SUBSPACE_ARGS=()
+if [ -n "$TEXT_SUBSPACE_PATH" ]; then
+    TEXT_SUBSPACE_ARGS+=(--text-subspace-path "$TEXT_SUBSPACE_PATH")
+    echo "[stage_2] text-subspace projection enabled: $TEXT_SUBSPACE_PATH"
+fi
 
 if [ -n "${WANDB_API_KEY}" ]; then
     LOGGING_ARGS+=(
@@ -184,4 +192,5 @@ PYTHONPATH="$AIAK_MAGATRON_PATH:$AIAK_TRAINING_PATH:$PYTHONPATH" \
     "${TRAINING_ARGS[@]}" \
     "${MODEL_PARALLEL_ARGS[@]}" \
     "${LOGGING_ARGS[@]}" \
+    "${TEXT_SUBSPACE_ARGS[@]}" \
     2>&1 | tee "$logfile"
