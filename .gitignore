@@ -60,3 +60,11 @@ coverage.xml
 **/.ipynb_checkpoints/
 .vscode/
 checkpoints/
+
+# Training run artefacts (logs, tensorboard, dataloader state) emitted next to launch shells
+/stage_1_alignment_*/
+/stage_1.5_mid_training_*/
+/stage_2_instruct_*/
+
+# spec-workflow tool state (local only)
+/.spec-workflow/
