@@ -70,7 +70,7 @@ fi
 # --- End of Multi-node configuration ---
 
 
-SAVE_CKPT_PATH=$(basename "$0" .sh)
+SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-mlp-routing-1"
 TENSORBOARD_PATH="${SAVE_CKPT_PATH}/tensorboard"
 
 mkdir -p "$SAVE_CKPT_PATH"
@@ -139,11 +139,12 @@ TRAINING_ARGS=(
     --save-interval 2000
     --ckpt-format torch
     --dataloader-save "${SAVE_CKPT_PATH}/dataloader"
-
+    --no-rope-fusion
     --ckpt-fully-parallel-load
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
+    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_ranked60.pt
 )
 
 MODEL_PARALLEL_ARGS=(

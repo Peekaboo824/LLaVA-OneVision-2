@@ -123,4 +123,13 @@ def rice_vl_model_provider(
                     freeze_vision_model=not train_vision_model,
                     freeze_adapter=not train_adapter)
 
+    # Heterogeneous Gradient Surgery: build a manager that pre-computes per-param
+    # gradient scales from the MLP routing mask. The manager is invoked once per
+    # train_step between backward and optimizer.step().
+    if getattr(args, "gradient_surgery_mask", None) is not None:
+        from aiak_training_llm.train.gradient_surgery import GradientSurgeryManager
+        manager = GradientSurgeryManager.build_from_args(model, args)
+        manager.print_plan()
+        args.gradient_surgery_manager = manager
+
     return model

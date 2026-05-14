@@ -379,7 +379,21 @@ def _add_extra_multimodal_args(parser):
     group.add_argument('--trainable-modules', default=['all'], nargs='*',
                        help='choices: all, language_model, adapter, vision_model, '
                             'language_expert_linear, vision_expert_linear'),
-    
+
+    # ---- Heterogeneous Gradient Surgery (modality-aware) ----
+    group.add_argument('--gradient-surgery-mask', type=str, default=None,
+                       help='Path to mlp_routing_masks_ranked.pt produced by the '
+                            'modality-routing analysis. When provided, after each '
+                            'backward and before optimizer.step(), language_model '
+                            'gradients are scaled per the heterogeneous gradient '
+                            'surgery rules. Currently only effective for '
+                            'llava-ov-1.5-* and TP=1.')
+    group.add_argument('--gradient-surgery-audit-first-step',
+                       action=argparse.BooleanOptionalAction, default=True,
+                       help='Run a sanity-check on rank 0 after the first '
+                            'gradient-surgery apply: idle neurons must have zero '
+                            'grad and vision_only neurons must have non-zero grad.')
+
     group.add_argument("--dataloader-save", type=str, default=None,
                        help="Energon dataloader state save path")
 
@@ -557,6 +571,27 @@ def _validata_extra_multimodal_args(args):
     args.variable_seq_lengths = True
     if not (args.packing_pretrain_data or args.packing_sft_data):
         args.packing_batch_size = None
+
+    # gradient surgery: validate path + model family + parallel constraints
+    if getattr(args, "gradient_surgery_mask", None) is not None:
+        if args.model_family != constants.VisionLanguageModelFamilies.LLAVA_OV_1_5:
+            print_rank_0(
+                f"[gradient-surgery] WARN: --gradient-surgery-mask is only effective for "
+                f"{constants.VisionLanguageModelFamilies.LLAVA_OV_1_5}, but model_family="
+                f"{args.model_family}. Ignoring.",
+                args.rank,
+            )
+            args.gradient_surgery_mask = None
+            return
+        if not os.path.isfile(args.gradient_surgery_mask):
+            raise FileNotFoundError(
+                f"--gradient-surgery-mask file not found: {args.gradient_surgery_mask}"
+            )
+        if getattr(args, "tensor_model_parallel_size", 1) > 1:
+            raise NotImplementedError(
+                f"--gradient-surgery-mask currently only supports TP=1, got "
+                f"TP={args.tensor_model_parallel_size}"
+            )
 
 
 def _validata_extra_video_args(args):
