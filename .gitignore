@@ -60,3 +60,7 @@ coverage.xml
 **/.ipynb_checkpoints/
 .vscode/
 checkpoints/
+
+# Local training outputs (mlp-routing experiments — not for VCS)
+/LLaVA-OneVision-1.5-4B-780k-Instruct-mlp-routing-*/
+/stage_2_instruct_llava_ov_4b-mlp-routing-*/
