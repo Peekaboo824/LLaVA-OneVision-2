@@ -158,7 +158,7 @@ class QwenSFTTrainer(Trainer):
             if not param.requires_grad:
                 skipped_no_grad.append(model_name)
                 continue
-            f_t = fisher[fk].to(device=target_device, dtype=torch.float32).contiguous()
+            f_t = fisher[fk].to(device=target_device, dtype=torch.bfloat16).contiguous()
             a_t = anchor[fk].to(device=target_device, dtype=torch.float32).contiguous()
             if f_t.shape != param.shape or a_t.shape != param.shape:
                 raise ValueError(
@@ -196,15 +196,16 @@ class QwenSFTTrainer(Trainer):
     def _compute_ewc_penalty(self) -> torch.Tensor:
         """Return scalar penalty = 0.5 * sum_i F_i * (theta_i - theta*_i)^2.
 
-        Caller multiplies by ``self._ewc_lambda`` and adds to the LM loss.
-        Computed in fp32; bf16 round-off would dominate the (theta-theta*)
-        difference when it is small.
-
-        fisher/anchor are pre-pinned to cuda:local_rank in _init_ewc_state
-        (the model gets moved onto the same device by DeepSpeed at
-        trainer.train()-time, so by the first compute_loss they match).
-        Doing the H2D burst lazily here, on the hot path, was found to
-        desync NCCL collective ordering across ranks and dead-lock the run.
+        Memory layout:
+        - fisher is kept as bf16 on the GPU (Fisher entries span ~10 decades
+          of magnitude across tensors but EWC consumes their relative
+          ordering — bf16's 7-bit mantissa is plenty for that)
+        - anchor stays fp32 — (param - anchor) gets tiny late in training
+          and bf16 rounding would silently zero out the penalty
+        - fisher is .float()'d per-key inside the loop so only one tensor
+          of fp32 fisher is alive at a time (peak overhead ≈ lm_head fp32
+          = 1.5 GB) instead of holding all 253 fp32 copies at init
+          (which previously cost ~15 GB on each rank)
         """
         if not self._ewc_pairs:
             return torch.zeros((), device=self.args.device, dtype=torch.float32)
@@ -215,7 +216,7 @@ class QwenSFTTrainer(Trainer):
             if param is None:
                 continue
             diff = param.float() - anchor
-            term = (fisher * diff.pow(2)).sum()
+            term = (fisher.float() * diff.pow(2)).sum()
             accum = term if accum is None else accum + term
         if accum is None:
             return torch.zeros((), device=self.args.device, dtype=torch.float32)
