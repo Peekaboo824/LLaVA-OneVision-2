@@ -33,6 +33,161 @@ class QwenSFTTrainer(Trainer):
 
     def __init__(self, *args, **kwargs):
         super(QwenSFTTrainer, self).__init__(*args, **kwargs)
+        # ---- EWC initialisation (no-op when ewc_lambda == 0) ----
+        # Stores per-parameter (fisher_fp32, anchor_fp32) pairs, both on the
+        # same device as the corresponding model parameter. Lookup by the
+        # exact name returned by ``model.named_parameters()``.
+        self._ewc_pairs: dict = {}
+        self._ewc_lambda: float = float(getattr(self.args, "ewc_lambda", 0.0) or 0.0)
+        if self._ewc_lambda > 0.0:
+            self._init_ewc_state()
+
+    def _init_ewc_state(self):
+        """Load Fisher + anchor dicts and align them with current parameters.
+
+        Only call when ``self._ewc_lambda > 0``. Raises if either file is
+        missing or any Fisher key cannot be matched to a model parameter — a
+        silent partial match would give a misleading EWC penalty.
+        """
+        fisher_path = getattr(self.args, "ewc_fisher_path", None)
+        anchor_path = getattr(self.args, "ewc_anchor_path", None)
+        if not fisher_path or not anchor_path:
+            raise ValueError(
+                "ewc_lambda > 0 requires both --ewc_fisher_path and "
+                "--ewc_anchor_path to be set."
+            )
+
+        is_rank0 = (
+            not torch.distributed.is_available()
+            or not torch.distributed.is_initialized()
+            or torch.distributed.get_rank() == 0
+        )
+
+        if is_rank0:
+            logger.info(f"[EWC] loading Fisher from {fisher_path}")
+            logger.info(f"[EWC] loading anchor from {anchor_path}")
+
+        fisher = torch.load(fisher_path, map_location="cpu")
+        anchor = torch.load(anchor_path, map_location="cpu")
+        fisher_keys = {k for k in fisher.keys() if k != "_meta"}
+        anchor_keys = {k for k in anchor.keys() if k != "_meta"}
+
+        if fisher_keys != anchor_keys:
+            only_fisher = sorted(fisher_keys - anchor_keys)[:5]
+            only_anchor = sorted(anchor_keys - fisher_keys)[:5]
+            raise ValueError(
+                f"[EWC] Fisher / anchor key sets differ. "
+                f"In Fisher only (sample): {only_fisher}; "
+                f"in anchor only (sample): {only_anchor}"
+            )
+
+        # Build {name: param} lookup for current model. Names already match the
+        # raw Qwen3 paths (e.g. model.layers.X.self_attn.q_proj.weight, lm_head.weight)
+        # because LLaVA-OneVision keeps the LLM sub-tree at top-level `model.*`.
+        param_map = dict(self.model.named_parameters())
+        missing_in_model = sorted(fisher_keys - set(param_map.keys()))
+        if missing_in_model:
+            raise ValueError(
+                f"[EWC] {len(missing_in_model)} Fisher keys not found in model "
+                f"named_parameters; first few: {missing_in_model[:5]}. "
+                f"Check that the Fisher was computed on a matching LLM."
+            )
+
+        matched = 0
+        skipped_no_grad = []
+        for name in sorted(fisher_keys):
+            param = param_map[name]
+            # If the user has frozen the LLM, EWC has nothing to constrain;
+            # warn and skip to avoid wasted memory.
+            if not param.requires_grad:
+                skipped_no_grad.append(name)
+                continue
+            device = param.device
+            f_t = fisher[name].to(device=device, dtype=torch.float32).contiguous()
+            a_t = anchor[name].to(device=device, dtype=torch.float32).contiguous()
+            if f_t.shape != param.shape or a_t.shape != param.shape:
+                raise ValueError(
+                    f"[EWC] shape mismatch for {name}: "
+                    f"fisher={tuple(f_t.shape)} anchor={tuple(a_t.shape)} "
+                    f"param={tuple(param.shape)}"
+                )
+            self._ewc_pairs[name] = (f_t, a_t)
+            matched += 1
+
+        if is_rank0:
+            logger.info(f"[EWC] λ={self._ewc_lambda} "
+                        f"matched={matched} skipped_no_grad={len(skipped_no_grad)} "
+                        f"total_fisher_keys={len(fisher_keys)}")
+            if skipped_no_grad:
+                logger.warning(
+                    f"[EWC] {len(skipped_no_grad)} params have requires_grad=False "
+                    f"and will NOT contribute to the penalty, e.g. "
+                    f"{skipped_no_grad[:3]}"
+                )
+            if matched == 0:
+                logger.warning(
+                    "[EWC] No params matched — penalty is identically 0. "
+                    "Likely freeze_llm=True; consider disabling EWC."
+                )
+
+    def _compute_ewc_penalty(self) -> torch.Tensor:
+        """Return scalar penalty = 0.5 * sum_i F_i * (theta_i - theta*_i)^2.
+
+        Caller multiplies by ``self._ewc_lambda`` and adds to the LM loss.
+        Computed in fp32; bf16 round-off would dominate the (theta-theta*)
+        difference when it is small.
+        """
+        if not self._ewc_pairs:
+            return torch.zeros((), device=self.args.device, dtype=torch.float32)
+        param_map = dict(self.model.named_parameters())
+        accum = None
+        for name, (fisher, anchor) in self._ewc_pairs.items():
+            param = param_map.get(name)
+            if param is None:
+                # Should not happen post-init, but guard against optimizer-time
+                # parameter reshuffles (e.g. PEFT wrapping mid-training).
+                continue
+            diff = param.float() - anchor
+            term = (fisher * diff.pow(2)).sum()
+            accum = term if accum is None else accum + term
+        if accum is None:
+            return torch.zeros((), device=self.args.device, dtype=torch.float32)
+        return 0.5 * accum
+
+    def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
+        """SFT loss + (optional) EWC penalty.
+
+        Falls back to ``Trainer.compute_loss`` when EWC is disabled, so the
+        non-EWC code path is byte-for-byte identical to the original.
+        """
+        if self._ewc_lambda <= 0.0 or not self._ewc_pairs:
+            return super().compute_loss(
+                model, inputs, return_outputs=return_outputs,
+                num_items_in_batch=num_items_in_batch,
+            )
+
+        outputs = super().compute_loss(
+            model, inputs, return_outputs=True,
+            num_items_in_batch=num_items_in_batch,
+        )
+        lm_loss, model_outputs = outputs
+        penalty = self._compute_ewc_penalty()
+        loss = lm_loss + self._ewc_lambda * penalty.to(lm_loss.dtype)
+
+        # Surface the components in trainer logs (rank0 only, throttled by HF).
+        if self.state.global_step % max(self.args.logging_steps, 1) == 0:
+            try:
+                self.log({
+                    "loss_lm": float(lm_loss.detach()),
+                    "loss_ewc": float((self._ewc_lambda * penalty).detach()),
+                })
+            except Exception:
+                # log() can throw during very early steps before state is ready.
+                pass
+
+        if return_outputs:
+            return loss, model_outputs
+        return loss
 
     def create_optimizer(self):
         """

@@ -58,6 +58,25 @@ class TrainingArguments(HFTrainingArguments):
     num_lora_modules: int = -1
     use_liger: bool = True
 
+    # ---- Elastic Weight Consolidation (EWC) ----
+    # When ewc_lambda > 0, the SFT loss becomes
+    #   L = L_lm + (lambda / 2) * sum_i F_i * (theta_i - theta*_i)^2
+    # where F is the diagonal Fisher and theta* is the anchor weight. Both are
+    # matched to current model params by exact ``named_parameters()`` name.
+    # Setting ewc_lambda = 0.0 (default) skips loading and reverts to plain SFT.
+    ewc_lambda: float = field(
+        default=0.0,
+        metadata={"help": "EWC strength. 0 disables EWC (default)."},
+    )
+    ewc_fisher_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to Fisher .pt produced by compute_fisher_qwen3_4b.py"},
+    )
+    ewc_anchor_path: Optional[str] = field(
+        default=None,
+        metadata={"help": "Path to anchor .pt produced by extract_anchor_qwen3_4b.py"},
+    )
+
 @dataclass
 class DPOArguments(DPOConfigTRL):
     cache_dir: Optional[str] = field(default=None)
