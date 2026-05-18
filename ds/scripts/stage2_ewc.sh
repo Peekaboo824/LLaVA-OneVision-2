@@ -42,8 +42,8 @@ deepspeed src/train/train_sft.py \
     --use_liger True \
     --deepspeed scripts/zero2.json \
     --model_id $MODEL_NAME \
-    --data_path llava_next_raw_format/llava_next_raw_format_processed.json \
-    --image_folder llava_next_raw_format/images \
+    --data_path /vepfs-mlp2/c20250505/240906016/jjy/Datasets/LLaVA-NeXT-780k-unpacked/annotations.jsonl \
+    --image_folder /vepfs-mlp2/c20250505/240906016/jjy/Datasets/LLaVA-NeXT-780k-unpacked \
     --remove_unused_columns False \
     --freeze_vision_tower False \
     --freeze_llm False \
