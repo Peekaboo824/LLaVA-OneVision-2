@@ -21,6 +21,18 @@ except ImportError:
     from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from train.train_utils import get_peft_state_maybe_zero_3, get_peft_state_non_lora_maybe_zero_3
 
+
+def local_rank0_for_print() -> bool:
+    """True on the rank that owns stdout for the run.
+
+    Used to throttle EWC component prints from inside compute_loss without
+    touching the distributed metric-logging path.
+    """
+    if not torch.distributed.is_available() or not torch.distributed.is_initialized():
+        return True
+    return torch.distributed.get_rank() == 0
+
+
 def maybe_zero_3(param, ignore_status=False, name=None):
     from deepspeed import zero
     from deepspeed.runtime.zero.partition_parameters import ZeroParamStatus
@@ -128,6 +140,16 @@ class QwenSFTTrainer(Trainer):
         matched = 0
         skipped_no_grad = []
         prefix_used = {}  # for diagnostic logging
+        # Force fisher/anchor onto cuda:local_rank at init. Model is on CPU
+        # right now, but DeepSpeed will move it onto the same device during
+        # trainer.train(). Pinning at init avoids a per-rank H2D burst on
+        # the first step — uneven first-step latency across ranks can shift
+        # NCCL collective ordering and dead-lock the run.
+        local_rank = max(int(getattr(self.args, "local_rank", 0) or 0), 0)
+        target_device = (
+            torch.device(f"cuda:{local_rank}")
+            if torch.cuda.is_available() else torch.device("cpu")
+        )
         for fk in sorted(fisher_keys):
             model_name = name_remap[fk]
             param = param_map[model_name]
@@ -136,9 +158,8 @@ class QwenSFTTrainer(Trainer):
             if not param.requires_grad:
                 skipped_no_grad.append(model_name)
                 continue
-            device = param.device
-            f_t = fisher[fk].to(device=device, dtype=torch.float32).contiguous()
-            a_t = anchor[fk].to(device=device, dtype=torch.float32).contiguous()
+            f_t = fisher[fk].to(device=target_device, dtype=torch.float32).contiguous()
+            a_t = anchor[fk].to(device=target_device, dtype=torch.float32).contiguous()
             if f_t.shape != param.shape or a_t.shape != param.shape:
                 raise ValueError(
                     f"[EWC] shape mismatch for {fk} -> {model_name}: "
@@ -179,11 +200,11 @@ class QwenSFTTrainer(Trainer):
         Computed in fp32; bf16 round-off would dominate the (theta-theta*)
         difference when it is small.
 
-        Lazy-migration of fisher/anchor onto the parameter device: at
-        ``__init__`` time the model is still on CPU (DeepSpeed moves it to
-        GPU later, during ``trainer.train()``). The first call here detects
-        the device drift, migrates each tensor once, and updates the cache
-        in place so subsequent steps don't pay the transfer cost.
+        fisher/anchor are pre-pinned to cuda:local_rank in _init_ewc_state
+        (the model gets moved onto the same device by DeepSpeed at
+        trainer.train()-time, so by the first compute_loss they match).
+        Doing the H2D burst lazily here, on the hot path, was found to
+        desync NCCL collective ordering across ranks and dead-lock the run.
         """
         if not self._ewc_pairs:
             return torch.zeros((), device=self.args.device, dtype=torch.float32)
@@ -192,13 +213,7 @@ class QwenSFTTrainer(Trainer):
         for name, (fisher, anchor) in self._ewc_pairs.items():
             param = param_map.get(name)
             if param is None:
-                # Should not happen post-init, but guard against optimizer-time
-                # parameter reshuffles (e.g. PEFT wrapping mid-training).
                 continue
-            if fisher.device != param.device:
-                fisher = fisher.to(param.device, non_blocking=True)
-                anchor = anchor.to(param.device, non_blocking=True)
-                self._ewc_pairs[name] = (fisher, anchor)
             diff = param.float() - anchor
             term = (fisher * diff.pow(2)).sum()
             accum = term if accum is None else accum + term
@@ -226,21 +241,26 @@ class QwenSFTTrainer(Trainer):
         penalty = self._compute_ewc_penalty()
         loss = lm_loss + self._ewc_lambda * penalty.to(lm_loss.dtype)
 
-        # Surface the components in trainer logs (rank0 only, throttled by HF).
+        # Surface the components in stdout (rank0 only). Do NOT route through
+        # self.log() from inside compute_loss: HF/DeepSpeed's metric-logging
+        # path includes an extra all-reduce on rank0 that the other ranks
+        # never enqueue, which shifts NCCL collective ordering between ranks
+        # and dead-locks the run within ~10 minutes (NCCL watchdog timeout).
         if self.state.global_step % max(self.args.logging_steps, 1) == 0:
             try:
-                ewc_term = (self._ewc_lambda * penalty).detach()
-                lm_detached = lm_loss.detach()
-                # clamp_min guards against a divide-by-zero on the unlikely
-                # degenerate batch where lm_loss is exactly 0.
-                ratio = ewc_term / lm_detached.to(ewc_term.dtype).clamp_min(1e-8)
-                self.log({
-                    "loss_lm": float(lm_detached),
-                    "loss_ewc": float(ewc_term),
-                    "loss_ewc_over_lm": float(ratio),
-                })
+                if local_rank0_for_print():
+                    ewc_term = (self._ewc_lambda * penalty).detach()
+                    lm_detached = lm_loss.detach()
+                    ratio = (ewc_term
+                             / lm_detached.to(ewc_term.dtype).clamp_min(1e-8))
+                    print(
+                        f"[ewc] step={self.state.global_step} "
+                        f"loss_lm={float(lm_detached):.4f} "
+                        f"loss_ewc={float(ewc_term):.4f} "
+                        f"loss_ewc_over_lm={float(ratio):.4e}",
+                        flush=True,
+                    )
             except Exception:
-                # log() can throw during very early steps before state is ready.
                 pass
 
         if return_outputs:
