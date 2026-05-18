@@ -6,13 +6,19 @@ from transformers import Trainer
 from transformers.trainer import (
     is_sagemaker_mp_enabled,
     get_parameter_names,
-    ALL_LAYERNORM_LAYERS,
     TRAINER_STATE_NAME,
     PREFIX_CHECKPOINT_DIR,
     logger,
     ExportableState,
     SaveStrategy
 )
+# Newer transformers (≥4.43-ish) moved ALL_LAYERNORM_LAYERS out of
+# transformers.trainer and into transformers.pytorch_utils. Keep a fallback
+# so the trainer works on both old and new versions.
+try:
+    from transformers.trainer import ALL_LAYERNORM_LAYERS
+except ImportError:
+    from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS
 from train.train_utils import get_peft_state_maybe_zero_3, get_peft_state_non_lora_maybe_zero_3
 
 def maybe_zero_3(param, ignore_status=False, name=None):
