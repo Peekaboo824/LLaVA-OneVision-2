@@ -177,9 +177,15 @@ class QwenSFTTrainer(Trainer):
         # Surface the components in trainer logs (rank0 only, throttled by HF).
         if self.state.global_step % max(self.args.logging_steps, 1) == 0:
             try:
+                ewc_term = (self._ewc_lambda * penalty).detach()
+                lm_detached = lm_loss.detach()
+                # clamp_min guards against a divide-by-zero on the unlikely
+                # degenerate batch where lm_loss is exactly 0.
+                ratio = ewc_term / lm_detached.to(ewc_term.dtype).clamp_min(1e-8)
                 self.log({
-                    "loss_lm": float(lm_loss.detach()),
-                    "loss_ewc": float((self._ewc_lambda * penalty).detach()),
+                    "loss_lm": float(lm_detached),
+                    "loss_ewc": float(ewc_term),
+                    "loss_ewc_over_lm": float(ratio),
                 })
             except Exception:
                 # log() can throw during very early steps before state is ready.
