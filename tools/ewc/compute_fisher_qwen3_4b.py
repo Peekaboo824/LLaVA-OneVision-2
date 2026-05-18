@@ -54,19 +54,33 @@ def _is_target_module_name(name):
 
 
 def _select_targets(model):
-    """Freeze non-target params; return list of (full_param_name, param)."""
+    """Freeze non-target params; return list of (full_param_name, param).
+
+    Walks ``named_modules()`` (NOT ``named_parameters()``) because Qwen3-4B
+    has ``tie_word_embeddings=True`` — then ``lm_head.weight`` and
+    ``model.embed_tokens.weight`` are the SAME ``nn.Parameter``, and
+    ``named_parameters()`` only emits one name for it (typically
+    ``model.embed_tokens.weight``). Iterating modules lets us address the
+    weight by the ``lm_head`` path while ``id()`` de-duplicates the shared
+    tensor so the gradient is accumulated only once.
+    """
     targets = []
-    target_module_names = set()
+    seen_ids = set()
     for mod_name, mod in model.named_modules():
-        if _is_target_module_name(mod_name) and isinstance(mod, torch.nn.Linear):
-            target_module_names.add(mod_name)
-    for name, param in model.named_parameters():
-        # weight params live as e.g. "model.layers.0.self_attn.q_proj.weight"
-        mod_name = name.rsplit(".", 1)[0]
-        if mod_name in target_module_names and name.endswith(".weight"):
-            param.requires_grad = True
-            targets.append((name, param))
-        else:
+        if not _is_target_module_name(mod_name):
+            continue
+        if not isinstance(mod, torch.nn.Linear):
+            continue
+        param = mod.weight
+        if id(param) in seen_ids:
+            continue
+        seen_ids.add(id(param))
+        param.requires_grad = True
+        targets.append((f"{mod_name}.weight", param))
+
+    target_ids = {id(p) for _, p in targets}
+    for _, param in model.named_parameters():
+        if id(param) not in target_ids:
             param.requires_grad = False
     return targets
 
