@@ -15,7 +15,13 @@ python compute_fisher_qwen3_4b.py \
     --dataset-path fisher_anchor_dataset.jsonl \
     --output fisher_dict_qwen3_4b.pt
 
-# 3. Extract matching anchor weights θ*_A.
+# 3. Normalise Fisher to per-sample expectation (divide by N).
+#    The trainer expects this normalised form.
+python normalize_fisher.py \
+    --input fisher_dict_qwen3_4b.pt \
+    --output fisher_dict_qwen3_4b_normalized.pt
+
+# 4. Extract matching anchor weights θ*_A.
 python extract_anchor_qwen3_4b.py \
     --model-path /path/to/Qwen3-4B-Instruct-2507 \
     --fisher-path fisher_dict_qwen3_4b.pt \
@@ -32,5 +38,6 @@ Note: Qwen3-4B has `tie_word_embeddings=true`, so `lm_head.weight` and
 captures gradient signal from both the output projection and the
 embedding-lookup path.
 
-Outputs are NOT mean-normalised; tune `ewc_lambda` (start ≈ 1e-3) so
-that `loss_ewc / loss_lm` lands in [0.01, 0.1] during stage-2 training.
+Outputs are mean-normalised (per-sample expectation of g²); tune
+`ewc_lambda` (start ≈ 2.0) so that `loss_ewc / loss_lm` lands in
+[0.01, 0.1] during stage-2 training.

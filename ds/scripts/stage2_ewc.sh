@@ -11,22 +11,25 @@
 #        --model-path /vepfs-mlp2/c20250505/240906016/jjy/LLaVA/checkpoints/Qwen3-4B-Instruct-2507 \
 #        --dataset-path fisher_anchor_dataset.jsonl \
 #        --output fisher_dict_qwen3_4b.pt
-#   3. python extract_anchor_qwen3_4b.py \
+#   3. python normalize_fisher.py \
+#        --input fisher_dict_qwen3_4b.pt \
+#        --output fisher_dict_qwen3_4b_normalized.pt
+#   4. python extract_anchor_qwen3_4b.py \
 #        --model-path /vepfs-mlp2/c20250505/240906016/jjy/LLaVA/checkpoints/Qwen3-4B-Instruct-2507 \
 #        --fisher-path fisher_dict_qwen3_4b.pt \
 #        --output anchor_dict_qwen3_4b.pt
 #
-# λ tuning: Fisher is NOT mean-normalised (raw g² sum over 2048 samples), so
-# the absolute scale of the penalty is large. Start at 1e-3 and watch
+# λ tuning: Fisher is mean-normalised (per-sample g²), so λ values are in
+# per-sample units. Start at 2.0 (≈ previous 1e-3 × N=2048) and watch
 # loss_ewc / loss_lm in trainer logs — target ratio 0.01 ~ 0.1.
 
 set -e
 
 MODEL_NAME="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-1.5/LLaVA-OneVision-1.5-4B-stage-1-558k"
 
-EWC_FISHER_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/fisher_dict_qwen3_4b.pt"
+EWC_FISHER_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/fisher_dict_qwen3_4b_normalized.pt"
 EWC_ANCHOR_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/anchor_dict_qwen3_4b.pt"
-EWC_LAMBDA=1e-3
+EWC_LAMBDA=2.0
 
 GLOBAL_BATCH_SIZE=128
 BATCH_PER_DEVICE=1
