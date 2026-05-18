@@ -221,17 +221,47 @@ class QwenSFTTrainer(Trainer):
             return torch.zeros((), device=self.args.device, dtype=torch.float32)
         return 0.5 * accum
 
+    def _topology_anchor(self, model, loss):
+        """Append a 1e-20-scaled sum over every trainable parameter to ``loss``.
+
+        Why: ZeRO-2 only enqueues reduce-scatter for parameters whose
+        ``param.grad`` is not None after backward. In mixed-modality
+        training, a pure-text micro-batch doesn't touch ``model.visual``
+        or ``model.visual.merger``, so on those ranks the corresponding
+        params come out grad-less; on ranks that drew an image sample,
+        they do get a grad. The two sides then enqueue a different number
+        of collectives at the very next backward and NCCL deadlocks after
+        the watchdog window (this was the source of the SeqNum=975 vs 979
+        skew across ranks observed at the 10-min timeout).
+
+        Solution: feed every trainable parameter into the loss with a
+        coefficient so small it round-trips to zero in bf16 (1e-20 is
+        well below ~1e-7 bf16 epsilon), so the term is numerically inert
+        for both the LM loss and the EWC penalty, but it forces autograd
+        to write a non-None grad onto every parameter every step, which
+        in turn forces ZeRO-2 to enqueue the same reduce-scatter sequence
+        on all ranks.
+        """
+        dummy = sum(p.sum() for p in model.parameters() if p.requires_grad)
+        return loss + 1e-20 * dummy.to(loss.dtype)
+
     def compute_loss(self, model, inputs, return_outputs=False, num_items_in_batch=None):
         """SFT loss + (optional) EWC penalty.
 
-        Falls back to ``Trainer.compute_loss`` when EWC is disabled, so the
-        non-EWC code path is byte-for-byte identical to the original.
+        Falls back to ``Trainer.compute_loss`` when EWC is disabled, but
+        either way appends the topology-anchor dummy so ZeRO-2 collective
+        ordering stays in lock-step across ranks.
         """
         if self._ewc_lambda <= 0.0 or not self._ewc_pairs:
-            return super().compute_loss(
-                model, inputs, return_outputs=return_outputs,
+            base = super().compute_loss(
+                model, inputs, return_outputs=True,
                 num_items_in_batch=num_items_in_batch,
             )
+            lm_loss, model_outputs = base
+            loss = self._topology_anchor(model, lm_loss)
+            if return_outputs:
+                return loss, model_outputs
+            return loss
 
         outputs = super().compute_loss(
             model, inputs, return_outputs=True,
@@ -240,6 +270,7 @@ class QwenSFTTrainer(Trainer):
         lm_loss, model_outputs = outputs
         penalty = self._compute_ewc_penalty()
         loss = lm_loss + self._ewc_lambda * penalty.to(lm_loss.dtype)
+        loss = self._topology_anchor(model, loss)
 
         # Surface the components in stdout (rank0 only). Do NOT route through
         # self.log() from inside compute_loss: HF/DeepSpeed's metric-logging
