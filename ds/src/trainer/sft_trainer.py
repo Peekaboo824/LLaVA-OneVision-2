@@ -288,7 +288,7 @@ class QwenSFTTrainer(Trainer):
                     print(
                         f"[ewc] step={self.state.global_step} "
                         f"loss_lm={float(lm_detached):.4f} "
-                        f"loss_ewc={float(ewc_term):.4f} "
+                        f"loss_ewc={float(ewc_term):.4e} "
                         f"loss_ewc_over_lm={float(ratio):.4e}",
                         flush=True,
                     )
