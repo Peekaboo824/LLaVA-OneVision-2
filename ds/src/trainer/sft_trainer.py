@@ -178,6 +178,12 @@ class QwenSFTTrainer(Trainer):
         Caller multiplies by ``self._ewc_lambda`` and adds to the LM loss.
         Computed in fp32; bf16 round-off would dominate the (theta-theta*)
         difference when it is small.
+
+        Lazy-migration of fisher/anchor onto the parameter device: at
+        ``__init__`` time the model is still on CPU (DeepSpeed moves it to
+        GPU later, during ``trainer.train()``). The first call here detects
+        the device drift, migrates each tensor once, and updates the cache
+        in place so subsequent steps don't pay the transfer cost.
         """
         if not self._ewc_pairs:
             return torch.zeros((), device=self.args.device, dtype=torch.float32)
@@ -189,6 +195,10 @@ class QwenSFTTrainer(Trainer):
                 # Should not happen post-init, but guard against optimizer-time
                 # parameter reshuffles (e.g. PEFT wrapping mid-training).
                 continue
+            if fisher.device != param.device:
+                fisher = fisher.to(param.device, non_blocking=True)
+                anchor = anchor.to(param.device, non_blocking=True)
+                self._ewc_pairs[name] = (fisher, anchor)
             diff = param.float() - anchor
             term = (fisher * diff.pow(2)).sum()
             accum = term if accum is None else accum + term
