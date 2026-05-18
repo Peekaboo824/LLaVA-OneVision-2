@@ -87,43 +87,79 @@ class QwenSFTTrainer(Trainer):
                 f"in anchor only (sample): {only_anchor}"
             )
 
-        # Build {name: param} lookup for current model. Names already match the
-        # raw Qwen3 paths (e.g. model.layers.X.self_attn.q_proj.weight, lm_head.weight)
-        # because LLaVA-OneVision keeps the LLM sub-tree at top-level `model.*`.
+        # Build {name: param} lookup for current model.
         param_map = dict(self.model.named_parameters())
-        missing_in_model = sorted(fisher_keys - set(param_map.keys()))
-        if missing_in_model:
+
+        # Fisher/anchor were computed on a standalone Qwen3 (params named
+        # ``model.layers.X.*``, ``lm_head.weight``). When loaded into LLaVA-
+        # OneVision the LLM sub-tree is nested as ``model.language_model.*``,
+        # so most keys need an extra prefix; ``lm_head.weight`` lives at the
+        # top of the VL model and matches as-is. Build a name→model_name map
+        # by trying each candidate prefix in order.
+        prefix_candidates = ("", "model.language_model.")
+        name_remap = {}
+        unresolved = []
+        for fk in fisher_keys:
+            target = None
+            for prefix in prefix_candidates:
+                # ``model.layers.X.*`` → strip leading ``model.`` then prepend
+                # the candidate; ``lm_head.weight`` is checked as-is via the
+                # empty prefix.
+                if prefix == "":
+                    candidate = fk
+                else:
+                    candidate = prefix + fk[len("model."):] if fk.startswith("model.") else fk
+                if candidate in param_map:
+                    target = candidate
+                    break
+            if target is None:
+                unresolved.append(fk)
+            else:
+                name_remap[fk] = target
+
+        if unresolved:
             raise ValueError(
-                f"[EWC] {len(missing_in_model)} Fisher keys not found in model "
-                f"named_parameters; first few: {missing_in_model[:5]}. "
-                f"Check that the Fisher was computed on a matching LLM."
+                f"[EWC] {len(unresolved)} Fisher keys not found in model "
+                f"named_parameters under any known prefix; first few: "
+                f"{unresolved[:5]}. Check that the Fisher was computed on a "
+                f"matching LLM."
             )
 
         matched = 0
         skipped_no_grad = []
-        for name in sorted(fisher_keys):
-            param = param_map[name]
+        prefix_used = {}  # for diagnostic logging
+        for fk in sorted(fisher_keys):
+            model_name = name_remap[fk]
+            param = param_map[model_name]
             # If the user has frozen the LLM, EWC has nothing to constrain;
             # warn and skip to avoid wasted memory.
             if not param.requires_grad:
-                skipped_no_grad.append(name)
+                skipped_no_grad.append(model_name)
                 continue
             device = param.device
-            f_t = fisher[name].to(device=device, dtype=torch.float32).contiguous()
-            a_t = anchor[name].to(device=device, dtype=torch.float32).contiguous()
+            f_t = fisher[fk].to(device=device, dtype=torch.float32).contiguous()
+            a_t = anchor[fk].to(device=device, dtype=torch.float32).contiguous()
             if f_t.shape != param.shape or a_t.shape != param.shape:
                 raise ValueError(
-                    f"[EWC] shape mismatch for {name}: "
+                    f"[EWC] shape mismatch for {fk} -> {model_name}: "
                     f"fisher={tuple(f_t.shape)} anchor={tuple(a_t.shape)} "
                     f"param={tuple(param.shape)}"
                 )
-            self._ewc_pairs[name] = (f_t, a_t)
+            # Key the pair by the *model* parameter name so _compute_ewc_penalty
+            # can look it up directly via named_parameters().
+            self._ewc_pairs[model_name] = (f_t, a_t)
             matched += 1
+            implied_prefix = (
+                "" if model_name == fk
+                else model_name[: -len(fk[len("model."):])] if fk.startswith("model.") else "?"
+            )
+            prefix_used[implied_prefix] = prefix_used.get(implied_prefix, 0) + 1
 
         if is_rank0:
             logger.info(f"[EWC] λ={self._ewc_lambda} "
                         f"matched={matched} skipped_no_grad={len(skipped_no_grad)} "
                         f"total_fisher_keys={len(fisher_keys)}")
+            logger.info(f"[EWC] prefix usage: {prefix_used}")
             if skipped_no_grad:
                 logger.warning(
                     f"[EWC] {len(skipped_no_grad)} params have requires_grad=False "
