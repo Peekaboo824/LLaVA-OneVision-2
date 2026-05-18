@@ -31,10 +31,15 @@ EWC_FISHER_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation
 EWC_ANCHOR_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/anchor_dict_qwen3_4b.pt"
 EWC_LAMBDA=2.0
 
-GLOBAL_BATCH_SIZE=128
+GLOBAL_BATCH_SIZE=224
 BATCH_PER_DEVICE=1
 NUM_DEVICES=8
 GRAD_ACCUM_STEPS=$((GLOBAL_BATCH_SIZE / (BATCH_PER_DEVICE * NUM_DEVICES)))
+
+# Total steps ≈ 780k / 224 ≈ 3478, rounded to 3500 to match the official
+# stage_2_instruct_llava_ov_4b.sh recipe. With max_steps set, HF Trainer
+# ignores num_train_epochs (kept below for readability only).
+MAX_STEPS=3500
 
 export PYTHONPATH=src:$PYTHONPATH
 
@@ -53,6 +58,7 @@ deepspeed src/train/train_sft.py \
     --disable_flash_attn2 False \
     --output_dir ./checkpoints/LLaVA-OneVision-1.5-4B-stage-2-ewc \
     --num_train_epochs 1 \
+    --max_steps $MAX_STEPS \
     --per_device_train_batch_size $BATCH_PER_DEVICE \
     --gradient_accumulation_steps $GRAD_ACCUM_STEPS \
     --image_min_pixels $((20 * 28 * 28)) \
@@ -61,7 +67,10 @@ deepspeed src/train/train_sft.py \
     --merger_lr 1e-5 \
     --vision_lr 2e-6 \
     --weight_decay 0. \
-    --warmup_ratio 0.03 \
+    --adam_beta1 0.9 \
+    --adam_beta2 0.99 \
+    --adam_epsilon 1e-5 \
+    --warmup_ratio 0.002 \
     --lr_scheduler_type "cosine" \
     --logging_steps 1 \
     --tf32 True \
@@ -70,9 +79,9 @@ deepspeed src/train/train_sft.py \
     --report_to tensorboard \
     --lazy_preprocess True \
     --save_strategy "steps" \
-    --save_steps 1000 \
+    --save_steps 2000 \
     --save_total_limit 2 \
-    --dataloader_num_workers 4 \
+    --dataloader_num_workers 16 \
     --ewc_lambda $EWC_LAMBDA \
     --ewc_fisher_path $EWC_FISHER_PATH \
     --ewc_anchor_path $EWC_ANCHOR_PATH
