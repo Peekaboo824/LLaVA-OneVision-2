@@ -29,7 +29,7 @@ MODEL_NAME="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-1.5/LLaVA-OneVis
 
 EWC_FISHER_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/fisher_dict_qwen3_4b_normalized.pt"
 EWC_ANCHOR_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/anchor_dict_qwen3_4b.pt"
-EWC_LAMBDA=2.0
+EWC_LAMBDA=0.0
 
 GLOBAL_BATCH_SIZE=224
 BATCH_PER_DEVICE=1
@@ -40,6 +40,14 @@ GRAD_ACCUM_STEPS=$((GLOBAL_BATCH_SIZE / (BATCH_PER_DEVICE * NUM_DEVICES)))
 # stage_2_instruct_llava_ov_4b.sh recipe. With max_steps set, HF Trainer
 # ignores num_train_epochs (kept below for readability only).
 MAX_STEPS=3500
+
+# NCCL safety nets — variable-length mixed-modality samples make per-rank
+# forward time wildly uneven. The default 600s collective timeout fires
+# easily during reduce-scatter on the very first global step. Borrow the
+# feature/lora settings: 30 min watchdog, raise a Python error instead of
+# SIGABRT'ing for an easier traceback if a hang really does happen.
+export NCCL_TIMEOUT="${NCCL_TIMEOUT:-1800}"
+export TORCH_NCCL_BLOCKING_WAIT="${TORCH_NCCL_BLOCKING_WAIT:-1}"
 
 export PYTHONPATH=src:$PYTHONPATH
 
