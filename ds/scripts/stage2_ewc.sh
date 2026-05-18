@@ -5,7 +5,7 @@
 # the LLM body back toward base whenever Fisher says a coordinate matters for
 # the pure-text task distribution. Vision tower / merger are untouched by EWC.
 #
-# Prerequisites (run once, in MLLM-Pure-Text-Preservation/):
+# Prerequisites (run once, in tools/ewc/):
 #   1. python build_fisher_data.py --output fisher_anchor_dataset.jsonl
 #   2. python compute_fisher_qwen3_4b.py \
 #        --model-path /vepfs-mlp2/c20250505/240906016/jjy/LLaVA/checkpoints/Qwen3-4B-Instruct-2507 \
