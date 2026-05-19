@@ -64,9 +64,12 @@ checkpoints/
 # Training artifacts / model weights (large files)
 .spec-workflow/
 /LLaVA-OneVision-1.5-4B-780k-Instruct-lora-r32a64/
+/LLaVA-OneVision-1.5-4B-780k-Instruct-lora-r32a64-llm-only/
+/LLaVA-OneVision-1.5-4B-780k-Instruct-lora-r32a64-step2000/
 /LLaVA-OneVision-1.5-4B-780k-Instruct-mlp-routing-60/
 /LLaVA-OneVision-1.5-4B-780k-Instruct-mlp-routing-60-llm-only/
 /LLaVA-OneVision-1.5-4B-780k-Instruct-mlp-routing-70/
+/LLaVA-OneVision-1.5-4B-780k-Instruct-mlp-routing-70-llm-only/
 /stage_2_instruct_llava_ov_4b-mlp-routing-70/
 *.safetensors
 *.bin

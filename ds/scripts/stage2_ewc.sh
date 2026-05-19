@@ -29,7 +29,7 @@ MODEL_NAME="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-1.5/LLaVA-OneVis
 
 EWC_FISHER_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/fisher_dict_qwen3_4b_normalized.pt"
 EWC_ANCHOR_PATH="/vepfs-mlp2/c20250505/240906016/jjy/MLLM-Pure-Text-Preservation/anchor_dict_qwen3_4b.pt"
-EWC_LAMBDA=0.0
+EWC_LAMBDA=20.0
 
 GLOBAL_BATCH_SIZE=224
 BATCH_PER_DEVICE=1
