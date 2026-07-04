@@ -12,6 +12,7 @@ CHECKPOINT_PATH=${CHECKPOINT_PATH:-"/workspace/LLaVA-OneVision-1.5/stage_1.5_mid
 
 #! /bin/bash
 # The script needs to be run on at least 1 nodes.
+# Variant: shared channels unfrozen with anchored weight decay (lambda=20)
 
 # --- Multi-node configuration ---
 # List of IP addresses for the nodes in the training cluster
@@ -69,8 +70,12 @@ else
 fi
 # --- End of Multi-node configuration ---
 
+# --- Shared anchor lambda (核心区别) ---
+# 解冻 shared 通道 + 锚定正则拉回原始权重, 尽可能保护纯文本
+# λ=20: anchor 力 ≈ 10× 标准 WD, shared 通道偏离约为全量微调的 1/20
+SHARED_ANCHOR_LAMBDA="${SHARED_ANCHOR_LAMBDA:-20.0}"
 
-SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-mass-75"
+SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-rank-60-shared-anchor-${SHARED_ANCHOR_LAMBDA}"
 TENSORBOARD_PATH="${SAVE_CKPT_PATH}/tensorboard"
 
 mkdir -p "$SAVE_CKPT_PATH"
@@ -144,10 +149,8 @@ TRAINING_ARGS=(
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
-    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_75.pt
-    # --gradient-surgery-shared-routing-scores-dir /vepfs-mlp2/c20250505/240906016/jjy/visualization/activation_analysis
-    # --gradient-surgery-shared-routing-alpha 2.0
-    # --gradient-surgery-shared-routing-power 3.0
+    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_ranked60.pt
+    --gradient-surgery-shared-anchor-lambda "${SHARED_ANCHOR_LAMBDA}"
 )
 
 MODEL_PARALLEL_ARGS=(

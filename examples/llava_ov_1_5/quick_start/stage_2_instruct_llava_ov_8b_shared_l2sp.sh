@@ -7,11 +7,21 @@ MBS="${4:-1}"
 GBS="${5:-224}"
 NSTEP="${6:-3500}"
 DATA_PATH=${DATA_PATH:-"/workspace/dataset/LLaVA-NeXT-780k-webdataset"}
-TOKENIZER_PATH=${TOKENIZER_PATH:-"/workspace/LLaVA-OneVision-1.5/LLaVA-OneVision-1.5-4B-stage0"}
-CHECKPOINT_PATH=${CHECKPOINT_PATH:-"/workspace/LLaVA-OneVision-1.5/stage_1.5_mid_training_llava_ov_4b_release"}
+TOKENIZER_PATH=${TOKENIZER_PATH:-"/workspace/LLaVA-OneVision-1.5/LLaVA-OneVision-1.5-8B-stage0"}
+CHECKPOINT_PATH=${CHECKPOINT_PATH:-"/workspace/LLaVA-OneVision-1.5/stage_1_alignment_llava_ov_8b_release"}
 
 #! /bin/bash
 # The script needs to be run on at least 1 nodes.
+# Variant: shared channels unfrozen with mixed regularization:
+#   relative L2 on fc1 (gate/up rows) + cosine distance on fc2 (down_proj cols)
+#   L_shared = λ_rl2 * Σ_j ||ΔW_g[j,:]||² / ||W_g^0[j,:]||² + ||ΔW_u[j,:]||² / ||W_u^0[j,:]||²
+#            + λ_cos * Σ_j (1 - cos(W_d[:,j], W_d^0[:,j]))
+#   fc1 grad += 2*λ_rl2 * ΔW[j,:] / ||W^0[j,:]||²
+#   fc2 grad += -λ_cos/||W[:,j]|| * (W^0_hat[:,j] - cos_sim * W_hat[:,j])
+
+# --- Regularization strengths ---
+COSINE_LAMBDA="${COSINE_LAMBDA:-0.1}"
+REL_L2_LAMBDA="${REL_L2_LAMBDA:-0.1}"
 
 # --- Multi-node configuration ---
 # List of IP addresses for the nodes in the training cluster
@@ -70,7 +80,7 @@ fi
 # --- End of Multi-node configuration ---
 
 
-SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-mass-75"
+SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_8b-shared-mixed-reg-rl2-${REL_L2_LAMBDA}-cos-${COSINE_LAMBDA}"
 TENSORBOARD_PATH="${SAVE_CKPT_PATH}/tensorboard"
 
 mkdir -p "$SAVE_CKPT_PATH"
@@ -97,7 +107,7 @@ else
 fi
 
 MODEL_ARGS=(
-    --model-name llava-ov-1.5-4b
+    --model-name llava-ov-1.5-8b
 )
 
 DATA_ARGS=(
@@ -144,10 +154,9 @@ TRAINING_ARGS=(
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
-    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_75.pt
-    # --gradient-surgery-shared-routing-scores-dir /vepfs-mlp2/c20250505/240906016/jjy/visualization/activation_analysis
-    # --gradient-surgery-shared-routing-alpha 2.0
-    # --gradient-surgery-shared-routing-power 3.0
+    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_80_8b.pt
+    --gradient-surgery-shared-rel-l2-lambda "${REL_L2_LAMBDA}"
+    --gradient-surgery-shared-cosine-lambda "${COSINE_LAMBDA}"
 )
 
 MODEL_PARALLEL_ARGS=(

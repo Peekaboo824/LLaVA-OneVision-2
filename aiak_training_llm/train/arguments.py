@@ -393,6 +393,109 @@ def _add_extra_multimodal_args(parser):
                        help='Run a sanity-check on rank 0 after the first '
                             'gradient-surgery apply: idle neurons must have zero '
                             'grad and vision_only neurons must have non-zero grad.')
+    group.add_argument('--gradient-surgery-shared-anchor-lambda', type=float,
+                       default=None,
+                       help='When set, unfreeze shared MLP channels and apply '
+                            'anchored weight decay: grad += lambda*(w - w_original). '
+                            'This allows shared channels to learn while being '
+                            'continuously pulled back towards original weights. '
+                            'Recommended range: 1.0~10.0. '
+                            'If not set, shared channels remain frozen (scale=0).')
+
+    group.add_argument('--gradient-surgery-shared-routing-scores-dir', type=str,
+                       default=None,
+                       help='Directory containing vision_profiles.npz and '
+                            'text_profiles.npz (raw Wanda scores per channel). '
+                            'When set, shared channels get adaptive scale: '
+                            'M_i = (S_vision_i / (S_vision_i + alpha*S_text_i + eps))^r '
+                            'where S are percentile-rank normalized scores. '
+                            'Mutually exclusive with --gradient-surgery-shared-anchor-lambda.')
+    group.add_argument('--gradient-surgery-shared-routing-alpha', type=float,
+                       default=2.0,
+                       help='Alpha in shared routing formula (text weight coefficient). '
+                            'Higher alpha suppresses shared channels with strong text activation.')
+    group.add_argument('--gradient-surgery-shared-routing-power', type=float,
+                       default=3.0,
+                       help='Power r in shared routing formula. '
+                            'Higher r sharpens the scale distribution towards 0.')
+    group.add_argument('--gradient-surgery-shared-full-update',
+                       action='store_true', default=False,
+                       help='When set, shared MLP channels are fully updated (scale=1.0) '
+                            'without any regularization, just like vision_only channels. '
+                            'Mutually exclusive with --gradient-surgery-shared-anchor-lambda '
+                            'and --gradient-surgery-shared-routing-scores-dir.')
+
+    group.add_argument('--gradient-surgery-shared-l2sp-lambda', type=float,
+                       default=None,
+                       help='When set, unfreeze shared MLP channels and apply '
+                            'text-score-weighted L2-SP regularization: '
+                            'grad += lambda * S_text_i * (W_i - W_i_old). '
+                            'Requires --gradient-surgery-shared-l2sp-scores-dir. '
+                            'Mutually exclusive with other shared-channel strategies.')
+    group.add_argument('--gradient-surgery-shared-l2sp-scores-dir', type=str,
+                       default=None,
+                       help='Directory containing text_profiles.npz with '
+                            'Wanda text importance scores per channel. '
+                            'Used with --gradient-surgery-shared-l2sp-lambda.')
+
+    group.add_argument('--gradient-surgery-shared-rel-l2-lambda', type=float,
+                       default=None,
+                       help='λ_in for relative L2 regularization on shared gate/up rows: '
+                            'λ_in * Σ_j (||ΔW_g[j,:]||²/||W_g^0[j,:]||² + '
+                            '||ΔW_u[j,:]||²/||W_u^0[j,:]||²). '
+                            'Must be used together with --gradient-surgery-shared-cosine-lambda. '
+                            'Mutually exclusive with other shared-channel strategies.')
+    group.add_argument('--gradient-surgery-shared-cosine-lambda', type=float,
+                       default=None,
+                       help='λ_angle for cosine distance regularization on shared down_proj columns: '
+                            'λ_angle * Σ_j (1 - cos(W_d[:,j], W_d^0[:,j])). '
+                            'Must be used together with --gradient-surgery-shared-rel-l2-lambda. '
+                            'Mutually exclusive with other shared-channel strategies.')
+
+    group.add_argument('--gradient-surgery-shared-abs-l2-lambda', type=float,
+                       default=None,
+                       help='Ablation: absolute L2 regularization grad += λ*(w-w0) '
+                            'on BOTH FC1 and FC2 shared channels. '
+                            'Mutually exclusive with other shared-channel strategies.')
+    group.add_argument('--gradient-surgery-shared-all-cosine-lambda', type=float,
+                       default=None,
+                       help='Ablation: cosine distance regularization on BOTH FC1 and FC2 '
+                            'shared channels. Loss = λ * Σ (1 - cos(w, w0)). '
+                            'Mutually exclusive with other shared-channel strategies.')
+
+    group.add_argument('--gradient-surgery-shared-swapped-cosine-lambda', type=float,
+                       default=None,
+                       help='Ablation (swapped mixed): cosine distance on FC1 (gate/up rows). '
+                            'Must be used together with --gradient-surgery-shared-swapped-rel-l2-lambda. '
+                            'Mutually exclusive with other shared-channel strategies.')
+    group.add_argument('--gradient-surgery-shared-swapped-rel-l2-lambda', type=float,
+                       default=None,
+                       help='Ablation (swapped mixed): relative L2 on FC2 (down_proj cols). '
+                            'Must be used together with --gradient-surgery-shared-swapped-cosine-lambda. '
+                            'Mutually exclusive with other shared-channel strategies.')
+
+    group.add_argument('--gradient-surgery-shared-tv-ratio-lambda', type=float,
+                       default=None,
+                       help='When set, unfreeze shared MLP channels and apply '
+                            'TV-ratio-weighted L2 regularization: '
+                            'grad += lambda * [T_rank/(T_rank+V_rank+eps)] * (W - W0). '
+                            'Text-dominant channels get stronger regularization, '
+                            'vision-dominant channels get weaker regularization. '
+                            'Requires --gradient-surgery-shared-tv-ratio-scores-dir. '
+                            'Mutually exclusive with other shared-channel strategies.')
+    group.add_argument('--gradient-surgery-shared-tv-ratio-scores-dir', type=str,
+                       default=None,
+                       help='Directory containing text_profiles.npz and '
+                            'vision_profiles.npz with Wanda importance scores. '
+                            'Used with --gradient-surgery-shared-tv-ratio-lambda.')
+
+    group.add_argument('--gradient-surgery-freeze-ablation', type=str, default=None,
+                       choices=['text_only', 'vision_only', 'shared', 'idle'],
+                       help='Channel-isolation ablation: only unfreeze the specified '
+                            'MLP channel type (scale=1.0), freeze all other three '
+                            'types (scale=0.0). For example, --gradient-surgery-freeze-ablation '
+                            'text_only means only text channels can update. '
+                            'Mutually exclusive with all shared-channel strategies.')
 
     group.add_argument("--dataloader-save", type=str, default=None,
                        help="Energon dataloader state save path")
@@ -592,6 +695,63 @@ def _validata_extra_multimodal_args(args):
                 f"--gradient-surgery-mask currently only supports TP=1, got "
                 f"TP={args.tensor_model_parallel_size}"
             )
+
+        # L2SP validation
+        l2sp_lambda = getattr(args, "gradient_surgery_shared_l2sp_lambda", None)
+        l2sp_scores_dir = getattr(args, "gradient_surgery_shared_l2sp_scores_dir", None)
+        if l2sp_lambda is not None and l2sp_lambda > 0:
+            if l2sp_scores_dir is None:
+                raise ValueError(
+                    "--gradient-surgery-shared-l2sp-lambda requires "
+                    "--gradient-surgery-shared-l2sp-scores-dir"
+                )
+            text_scores_path = os.path.join(l2sp_scores_dir, "text_profiles.npz")
+            if not os.path.isfile(text_scores_path):
+                raise FileNotFoundError(
+                    f"L2SP text scores file not found: {text_scores_path}"
+                )
+
+        # Relative-L2 + Cosine mixed regularization validation
+        rel_l2_lambda = getattr(args, "gradient_surgery_shared_rel_l2_lambda", None)
+        cosine_lambda = getattr(args, "gradient_surgery_shared_cosine_lambda", None)
+        rel_l2_set = rel_l2_lambda is not None and rel_l2_lambda > 0
+        cosine_set = cosine_lambda is not None and cosine_lambda > 0
+        if rel_l2_set != cosine_set:
+            raise ValueError(
+                "--gradient-surgery-shared-rel-l2-lambda and "
+                "--gradient-surgery-shared-cosine-lambda must be set together"
+            )
+
+        # Swapped mixed regularization validation
+        sw_cos = getattr(args, "gradient_surgery_shared_swapped_cosine_lambda", None)
+        sw_rl2 = getattr(args, "gradient_surgery_shared_swapped_rel_l2_lambda", None)
+        sw_cos_set = sw_cos is not None and sw_cos > 0
+        sw_rl2_set = sw_rl2 is not None and sw_rl2 > 0
+        if sw_cos_set != sw_rl2_set:
+            raise ValueError(
+                "--gradient-surgery-shared-swapped-cosine-lambda and "
+                "--gradient-surgery-shared-swapped-rel-l2-lambda must be set together"
+            )
+
+        # TV-Ratio validation
+        tv_ratio_lambda = getattr(args, "gradient_surgery_shared_tv_ratio_lambda", None)
+        tv_ratio_scores_dir = getattr(args, "gradient_surgery_shared_tv_ratio_scores_dir", None)
+        if tv_ratio_lambda is not None and tv_ratio_lambda > 0:
+            if tv_ratio_scores_dir is None:
+                raise ValueError(
+                    "--gradient-surgery-shared-tv-ratio-lambda requires "
+                    "--gradient-surgery-shared-tv-ratio-scores-dir"
+                )
+            tv_text_path = os.path.join(tv_ratio_scores_dir, "text_profiles.npz")
+            tv_vision_path = os.path.join(tv_ratio_scores_dir, "vision_profiles.npz")
+            if not os.path.isfile(tv_text_path):
+                raise FileNotFoundError(
+                    f"TV-ratio text scores file not found: {tv_text_path}"
+                )
+            if not os.path.isfile(tv_vision_path):
+                raise FileNotFoundError(
+                    f"TV-ratio vision scores file not found: {tv_vision_path}"
+                )
 
 
 def _validata_extra_video_args(args):

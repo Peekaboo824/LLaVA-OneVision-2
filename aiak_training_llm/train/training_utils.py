@@ -576,6 +576,10 @@ def train_step(forward_step_func, data_iterator, model, optimizer, opt_param_sch
     surgery_manager = getattr(args, 'gradient_surgery_manager', None)
     if surgery_manager is not None:
         surgery_manager.apply(model)
+        l2sp_loss = surgery_manager.get_l2sp_loss()
+        if l2sp_loss is not None and losses_reduced:
+            for x in losses_reduced:
+                x['l2sp loss'] = l2sp_loss
         if (args.curr_iteration == 0
                 and getattr(args, 'gradient_surgery_audit_first_step', True)
                 and torch.distributed.get_rank() == 0):

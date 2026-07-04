@@ -47,6 +47,25 @@ class LlavaOnevision1_5Config:
     moe_ffn_hidden_size: int = None
 
 
+@register_model_config(model_family=VisionLanguageModelFamilies.LLAVA_OV_1_5, model_arch="llava-ov-1.5-0.6b")
+def llava_one_vision_1_5_0_6b():
+    """llava-ov-1.5-0.6b"""
+    return LlavaOnevision1_5Config(
+        num_layers=28,
+        hidden_size=1024,
+        ffn_hidden_size=3072,
+        num_attention_heads=16,
+        group_query_attention=True,
+        num_query_groups=8,
+        vocab_size_in_config_file=151936,
+        make_vocab_size_divisible_by=128,
+        qk_layernorm=True,
+        kv_channels=128,
+        add_qkv_bias=False,
+        rotary_base=1000000,
+    )
+
+
 @register_model_config(model_family=VisionLanguageModelFamilies.LLAVA_OV_1_5, model_arch="llava-ov-1.5-3b")
 def llava_one_vision_1_5_3b():
     """llava-ov-1.5-3b"""

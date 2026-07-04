@@ -11,15 +11,13 @@ TOKENIZER_PATH=${TOKENIZER_PATH:-"/workspace/LLaVA-OneVision-1.5/LLaVA-OneVision
 CHECKPOINT_PATH=${CHECKPOINT_PATH:-"/workspace/LLaVA-OneVision-1.5/stage_1.5_mid_training_llava_ov_4b_release"}
 
 #! /bin/bash
-# The script needs to be run on at least 1 nodes.
+# Channel-isolation ablation: only shared channels unfrozen, all others frozen.
 
 # --- Multi-node configuration ---
-# List of IP addresses for the nodes in the training cluster
 declare -a list_ip=(
     "localhost"
 )
 
-# Get the primary IP of the current node
 CURRENT_IP=$(hostname -I | awk '{print $1}')
 
 if [ -z "$CURRENT_IP" ]; then
@@ -31,7 +29,6 @@ if [[ ${#list_ip[@]} -eq 1 && ( "${list_ip[0]}" == "localhost" || "${list_ip[0]}
     SINGLE_NODE=1
 fi
 
-# Dynamically determine NNODES, MASTER_ADDR
 NNODES=${#list_ip[@]}
 MASTER_ADDR=${list_ip[0]}
 
@@ -45,7 +42,6 @@ if [[ $SINGLE_NODE -eq 1 ]]; then
     echo "Current Node Rank: ${NODE_RANK}"
     echo "Node Size: ${NNODES}"
 else
-    # Find the rank of the current node
     NODE_RANK=-1
     for i in "${!list_ip[@]}"; do
         if [[ "${list_ip[$i]}" == "${CURRENT_IP}" ]]; then
@@ -54,7 +50,6 @@ else
         fi
     done
 
-    # Exit if the current IP is not in the list
     if [ "$NODE_RANK" -eq -1 ]; then
         echo "Error: Current IP ($CURRENT_IP) not found in the IP list."
         echo "Please run this script on a node with an IP in list_ip."
@@ -70,13 +65,13 @@ fi
 # --- End of Multi-node configuration ---
 
 
-SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-mass-75"
+SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-rank-60-ablation-shared"
 TENSORBOARD_PATH="${SAVE_CKPT_PATH}/tensorboard"
 
 mkdir -p "$SAVE_CKPT_PATH"
 mkdir -p "$TENSORBOARD_PATH"
 mkdir -p "$SAVE_CKPT_PATH/dataloader"
-GPUS_PER_NODE=8
+GPUS_PER_NODE=4
 
 # Change for multinode config
 MASTER_ADDR=${MASTER_ADDR:-"${list_ip[0]}"}
@@ -136,7 +131,7 @@ TRAINING_ARGS=(
     --bf16
     --load "$CHECKPOINT_PATH"
     --save "$SAVE_CKPT_PATH"
-    --save-interval 2000
+    --save-interval 4000
     --ckpt-format torch
     --dataloader-save "${SAVE_CKPT_PATH}/dataloader"
     --no-rope-fusion
@@ -144,10 +139,8 @@ TRAINING_ARGS=(
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
-    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_75.pt
-    # --gradient-surgery-shared-routing-scores-dir /vepfs-mlp2/c20250505/240906016/jjy/visualization/activation_analysis
-    # --gradient-surgery-shared-routing-alpha 2.0
-    # --gradient-surgery-shared-routing-power 3.0
+    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_80.pt
+    --gradient-surgery-freeze-ablation shared
 )
 
 MODEL_PARALLEL_ARGS=(

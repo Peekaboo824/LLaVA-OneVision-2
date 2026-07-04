@@ -12,6 +12,19 @@ CHECKPOINT_PATH=${CHECKPOINT_PATH:-"/workspace/LLaVA-OneVision-1.5/stage_1.5_mid
 
 #! /bin/bash
 # The script needs to be run on at least 1 nodes.
+# Variant: shared channels unfrozen with TV-Ratio weighted L2 regularization:
+#   λ_i = T_rank / (T_rank + V_rank + ε)
+#   grad[shared] += λ * λ_i * (W - W0)
+#
+# Text-dominant shared channels (high T_rank, low V_rank) → λ_i ≈ 1.0 → strong regularization
+# Vision-dominant shared channels (low T_rank, high V_rank) → λ_i ≈ 0.0 → weak regularization
+# Balanced shared channels → λ_i ≈ 0.5 → moderate regularization
+
+# --- Regularization strength ---
+TV_RATIO_LAMBDA="${TV_RATIO_LAMBDA:-0.08}"
+
+# --- Scores directory (must contain text_profiles.npz and vision_profiles.npz) ---
+SCORES_DIR="${SCORES_DIR:-/vepfs-mlp2/c20250505/240906016/jjy/visualization/activation_analysis}"
 
 # --- Multi-node configuration ---
 # List of IP addresses for the nodes in the training cluster
@@ -70,7 +83,7 @@ fi
 # --- End of Multi-node configuration ---
 
 
-SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-mass-75"
+SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-shared-tv-ratio-${TV_RATIO_LAMBDA}"
 TENSORBOARD_PATH="${SAVE_CKPT_PATH}/tensorboard"
 
 mkdir -p "$SAVE_CKPT_PATH"
@@ -144,10 +157,9 @@ TRAINING_ARGS=(
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
-    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_75.pt
-    # --gradient-surgery-shared-routing-scores-dir /vepfs-mlp2/c20250505/240906016/jjy/visualization/activation_analysis
-    # --gradient-surgery-shared-routing-alpha 2.0
-    # --gradient-surgery-shared-routing-power 3.0
+    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_80.pt
+    --gradient-surgery-shared-tv-ratio-lambda "${TV_RATIO_LAMBDA}"
+    --gradient-surgery-shared-tv-ratio-scores-dir "${SCORES_DIR}"
 )
 
 MODEL_PARALLEL_ARGS=(

@@ -10,8 +10,9 @@ DATA_PATH=${DATA_PATH:-"/workspace/dataset/LLaVA-NeXT-780k-webdataset"}
 TOKENIZER_PATH=${TOKENIZER_PATH:-"/workspace/LLaVA-OneVision-1.5/LLaVA-OneVision-1.5-4B-stage0"}
 CHECKPOINT_PATH=${CHECKPOINT_PATH:-"/workspace/LLaVA-OneVision-1.5/stage_1.5_mid_training_llava_ov_4b_release"}
 
-#! /bin/bash
-# The script needs to be run on at least 1 nodes.
+
+# --- Regularization strengths ---
+COSINE_LAMBDA="${COSINE_LAMBDA:-0.1}"
 
 # --- Multi-node configuration ---
 # List of IP addresses for the nodes in the training cluster
@@ -70,7 +71,7 @@ fi
 # --- End of Multi-node configuration ---
 
 
-SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-mass-75"
+SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-shared-all-cosine-${COSINE_LAMBDA}"
 TENSORBOARD_PATH="${SAVE_CKPT_PATH}/tensorboard"
 
 mkdir -p "$SAVE_CKPT_PATH"
@@ -144,10 +145,8 @@ TRAINING_ARGS=(
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
-    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_75.pt
-    # --gradient-surgery-shared-routing-scores-dir /vepfs-mlp2/c20250505/240906016/jjy/visualization/activation_analysis
-    # --gradient-surgery-shared-routing-alpha 2.0
-    # --gradient-surgery-shared-routing-power 3.0
+    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_80.pt
+    --gradient-surgery-shared-all-cosine-lambda "${COSINE_LAMBDA}"
 )
 
 MODEL_PARALLEL_ARGS=(

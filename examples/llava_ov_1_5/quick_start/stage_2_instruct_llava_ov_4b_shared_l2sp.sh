@@ -12,6 +12,16 @@ CHECKPOINT_PATH=${CHECKPOINT_PATH:-"/workspace/LLaVA-OneVision-1.5/stage_1.5_mid
 
 #! /bin/bash
 # The script needs to be run on at least 1 nodes.
+# Variant: shared channels unfrozen with SWAPPED mixed regularization (ablation):
+#   cosine distance on fc1 (gate/up rows) + relative L2 on fc2 (down_proj cols)
+#   L_shared = λ_angle * Σ_j (1 - cos(W_g[j,:], W_g^0[j,:]) + 1 - cos(W_u[j,:], W_u^0[j,:]))
+#            + λ_in * Σ_j ||ΔW_d[:,j]||² / ||W_d^0[:,j]||²
+#   fc1 grad += -λ_angle/||W[j,:]|| * (W^0_hat[j,:] - cos_sim * W_hat[j,:])
+#   fc2 grad += 2*λ_in * ΔW[:,j] / ||W^0[:,j]||²
+
+# --- Regularization strengths ---
+COSINE_LAMBDA="${COSINE_LAMBDA:-0.1}"
+REL_L2_LAMBDA="${REL_L2_LAMBDA:-0.1}"
 
 # --- Multi-node configuration ---
 # List of IP addresses for the nodes in the training cluster
@@ -70,13 +80,13 @@ fi
 # --- End of Multi-node configuration ---
 
 
-SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-mass-75"
+SAVE_CKPT_PATH="/vepfs-mlp2/c20250505/240906016/jjy/LLaVA-OneVision-2/stage_2_instruct_llava_ov_4b-shared-swapped-cos-${COSINE_LAMBDA}-rl2-${REL_L2_LAMBDA}"
 TENSORBOARD_PATH="${SAVE_CKPT_PATH}/tensorboard"
 
 mkdir -p "$SAVE_CKPT_PATH"
 mkdir -p "$TENSORBOARD_PATH"
 mkdir -p "$SAVE_CKPT_PATH/dataloader"
-GPUS_PER_NODE=8
+GPUS_PER_NODE=4
 
 # Change for multinode config
 MASTER_ADDR=${MASTER_ADDR:-"${list_ip[0]}"}
@@ -144,10 +154,9 @@ TRAINING_ARGS=(
     --recompute-granularity full
     --recompute-method uniform
     --recompute-num-layers 1
-    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_75.pt
-    # --gradient-surgery-shared-routing-scores-dir /vepfs-mlp2/c20250505/240906016/jjy/visualization/activation_analysis
-    # --gradient-surgery-shared-routing-alpha 2.0
-    # --gradient-surgery-shared-routing-power 3.0
+    --gradient-surgery-mask /vepfs-mlp2/c20250505/240906016/jjy/visualization/mlp_routing_masks_adaptive_80.pt
+    --gradient-surgery-shared-swapped-cosine-lambda "${COSINE_LAMBDA}"
+    --gradient-surgery-shared-swapped-rel-l2-lambda "${REL_L2_LAMBDA}"
 )
 
 MODEL_PARALLEL_ARGS=(
